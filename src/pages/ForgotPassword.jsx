@@ -30,10 +30,18 @@ function ForgotPassword() {
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(data.message || "Request failed");
-            if (data.resetToken) setToken(data.resetToken);
-            setMessage(
-                "If that email exists, a reset token has been sent. Enter it below to reset."
-            );
+            if (data.resetToken) {
+                // Dev mode (email disabled): token is returned directly and
+                // pre-filled below so you can reset without email.
+                setToken(data.resetToken);
+                setMessage(
+                    "Email sending is off, so your reset token is filled in below. Set a new password."
+                );
+            } else {
+                setMessage(
+                    "If that email exists, a reset link has been sent to your inbox."
+                );
+            }
             setStep(2);
         } catch (err) {
             setError(err.message);

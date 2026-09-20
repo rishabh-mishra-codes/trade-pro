@@ -59,7 +59,7 @@ function StockSearch({ onPick }) {
             </div>
 
             {open && results.length > 0 && (
-                <div className="absolute z-50 mt-2 w-full surface-solid rounded-xl overflow-hidden shadow-2xl max-h-72 overflow-y-auto">
+                <div className="absolute z-50 mt-2 w-full surface-solid text-(--text) rounded-xl overflow-hidden shadow-2xl max-h-72 overflow-y-auto border border-(--border)">
                     {results.map((s) => (
                         <button
                             key={s.symbol}

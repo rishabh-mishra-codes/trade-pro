@@ -120,11 +120,16 @@ function Home() {
                 return;
             }
             try {
-                const [q, idx] = await Promise.all([
-                    getQuotesFor(stocks),
-                    getQuotesFor(INDEX_STOCKS).catch(() => []),
-                ]);
+                // One combined batch: indices + watchlist (deduped by symbol)
+                // to minimize API calls and stay under the free-tier limit.
+                const bySymbol = new Map();
+                [...INDEX_STOCKS, ...stocks].forEach((s) => bySymbol.set(s.symbol, s));
+                const combined = await getQuotesFor([...bySymbol.values()]);
                 if (!mounted) return;
+
+                const indexSymbols = new Set(INDEX_STOCKS.map((s) => s.symbol));
+                const idx = combined.filter((s) => indexSymbols.has(s.symbol));
+                const q = combined.filter((s) => !indexSymbols.has(s.symbol));
 
                 setQuotes(q);
                 setIndices(idx.length ? idx : q.slice(0, 4));
@@ -140,7 +145,11 @@ function Home() {
             } catch (err) {
                 if (mounted) {
                     setLive(false);
-                    setMarketError(err.message || "Failed to load market data");
+                    setMarketError(
+                        err.rateLimited
+                            ? "Live data paused: API rate limit reached. It will retry automatically."
+                            : err.message || "Failed to load market data"
+                    );
                 }
             } finally {
                 if (mounted) setMarketLoading(false);
@@ -148,7 +157,8 @@ function Home() {
         };
 
         loadMarket();
-        const timer = setInterval(loadMarket, 15000);
+        // 60s poll keeps us well under the free tier (8 req/min, 800/day).
+        const timer = setInterval(loadMarket, 60000);
         return () => {
             mounted = false;
             clearInterval(timer);

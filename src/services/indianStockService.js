@@ -62,6 +62,15 @@ function mapStockQuote(meta, quote = {}) {
     };
 }
 
+// Custom error so callers can detect rate limiting (HTTP 429 / TwelveData 429).
+export class RateLimitError extends Error {
+    constructor(message) {
+        super(message || "API rate limit reached");
+        this.name = "RateLimitError";
+        this.rateLimited = true;
+    }
+}
+
 async function fetchTwelveData(path, params = {}) {
     if (!API_KEY) {
         throw new Error("Missing VITE_TWELVE_DATA_API_KEY");
@@ -73,7 +82,12 @@ async function fetchTwelveData(path, params = {}) {
     })}`;
 
     const response = await fetch(url);
-    const data = await response.json();
+    const data = await response.json().catch(() => ({}));
+
+    // Twelve Data returns code 429 (and HTTP 429) when the rate limit is hit.
+    if (response.status === 429 || data.code === 429) {
+        throw new RateLimitError(data.message || "API rate limit reached");
+    }
 
     if (!response.ok || data.status === "error" || data.code >= 400) {
         throw new Error(data.message || "Failed to fetch Twelve Data");
@@ -82,10 +96,11 @@ async function fetchTwelveData(path, params = {}) {
     return data;
 }
 
-// Fetch quotes for an arbitrary list of {symbol, name}. Batched into one call.
-// Cached briefly to dedupe rapid re-requests (e.g. multiple components).
+// Cache quotes for 60s to stay well within the free tier (8 req/min, 800/day).
+// On a rate-limit error we serve the last cached data (even if stale) so the
+// UI keeps working instead of breaking.
 const quoteCache = new Map(); // key -> { at, data }
-const CACHE_MS = 10000;
+const CACHE_MS = 60000;
 
 export async function getQuotesFor(stocks) {
     if (!stocks?.length) return [];
@@ -97,7 +112,15 @@ export async function getQuotesFor(stocks) {
         return cached.data;
     }
 
-    const data = await fetchTwelveData("/quote", { symbol: key });
+    let data;
+    try {
+        data = await fetchTwelveData("/quote", { symbol: key });
+    } catch (err) {
+        // If we hit the rate limit but have older cached data, reuse it.
+        if (err.rateLimited && cached) return cached.data;
+        throw err;
+    }
+
     const quotes = stocks.map((stock) => {
         const quote = symbols.length === 1 ? data : data[stock.symbol];
         return mapStockQuote(stock, quote || {});
@@ -124,18 +147,34 @@ export async function getIndianQuotes(watchStocks = INDIAN_STOCKS) {
 
 // Historical/intraday candles for a symbol (for live charts).
 // interval examples: "5min", "15min", "1h", "1day"
+// Cached for 60s per (symbol, interval) to avoid burning the rate limit when
+// the user switches theme or re-selects the same stock.
+const seriesCache = new Map();
+
 export async function getTimeSeries(symbol, interval = "5min", outputsize = 100) {
-    const data = await fetchTwelveData("/time_series", {
-        symbol,
-        interval,
-        outputsize: String(outputsize),
-        order: "ASC",
-    });
+    const cacheKey = `${symbol}|${interval}|${outputsize}`;
+    const cached = seriesCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < 60000) {
+        return cached.data;
+    }
+
+    let data;
+    try {
+        data = await fetchTwelveData("/time_series", {
+            symbol,
+            interval,
+            outputsize: String(outputsize),
+            order: "ASC",
+        });
+    } catch (err) {
+        if (err.rateLimited && cached) return cached.data;
+        throw err;
+    }
 
     const values = Array.isArray(data.values) ? data.values : [];
 
     // lightweight-charts wants { time, open, high, low, close } ascending.
-    return values.map((v) => {
+    const mapped = values.map((v) => {
         const ts = Math.floor(new Date(v.datetime.replace(" ", "T")).getTime() / 1000);
         return {
             time: ts,
@@ -145,4 +184,7 @@ export async function getTimeSeries(symbol, interval = "5min", outputsize = 100)
             close: Number(v.close),
         };
     });
+
+    seriesCache.set(cacheKey, { at: Date.now(), data: mapped });
+    return mapped;
 }

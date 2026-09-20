@@ -84,7 +84,9 @@ function StockChart({ symbol, name }) {
         return () => {
             active = false;
         };
-    }, [symbol, interval, theme]);
+        // Note: theme is intentionally NOT a dependency — switching light/dark
+        // restyles the chart without re-fetching data (saves API calls).
+    }, [symbol, interval]);
 
     return (
         <div className="surface rounded-2xl p-5">
