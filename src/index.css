@@ -1,7 +1,167 @@
 @import "tailwindcss";
 
-body{
-    margin:0;
-    padding:0;
-    font-family:Arial, Helvetica, sans-serif;
+/* Enable class-based dark mode (Tailwind v4) so our toggle controls it */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+    color-scheme: light dark;
+
+    /* ---- Light theme tokens ---- */
+    --bg: #eef1f6;
+    --bg-grad-1: #f6f8fc;
+    --bg-grad-2: #eaeef6;
+    --surface: rgba(255, 255, 255, 0.72);
+    --surface-solid: #ffffff;
+    --surface-hover: rgba(15, 23, 42, 0.04);
+    --border: rgba(15, 23, 42, 0.08);
+    --border-strong: rgba(15, 23, 42, 0.14);
+    --text: #0b1220;
+    --text-muted: #5b6473;
+    --accent: #4f46e5;
+    --accent-soft: rgba(79, 70, 229, 0.12);
+    --pos: #059669;
+    --neg: #dc2626;
+    --shadow: 0 8px 30px rgba(15, 23, 42, 0.08);
+    --shadow-lg: 0 20px 50px rgba(15, 23, 42, 0.14);
+}
+
+:root[data-theme="dark"] {
+    /* ---- Dark theme tokens (deep navy, not pure black) ---- */
+    --bg: #070b14;
+    --bg-grad-1: #0b1120;
+    --bg-grad-2: #060912;
+    --surface: rgba(255, 255, 255, 0.045);
+    --surface-solid: #0f1626;
+    --surface-hover: rgba(255, 255, 255, 0.06);
+    --border: rgba(255, 255, 255, 0.08);
+    --border-strong: rgba(255, 255, 255, 0.14);
+    --text: #eef2f9;
+    --text-muted: #8b95a7;
+    --accent: #6366f1;
+    --accent-soft: rgba(99, 102, 241, 0.16);
+    --pos: #34d399;
+    --neg: #f87171;
+    --shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.55);
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html {
+    scroll-behavior: smooth;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Arial,
+        sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    color: var(--text);
+    background:
+        radial-gradient(1200px 600px at 100% -10%, var(--accent-soft), transparent 60%),
+        linear-gradient(180deg, var(--bg-grad-1), var(--bg-grad-2));
+    background-attachment: fixed;
+    min-height: 100vh;
+    transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Themed surface with subtle glass + border */
+.app-bg {
+    color: var(--text);
+}
+
+.surface {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    box-shadow: var(--shadow);
+}
+
+.surface-solid {
+    background: var(--surface-solid);
+    border: 1px solid var(--border);
+}
+
+.elevated {
+    box-shadow: var(--shadow-lg);
+}
+
+.hairline {
+    border-color: var(--border) !important;
+}
+
+.text-muted {
+    color: var(--text-muted);
+}
+
+.hover-surface:hover {
+    background: var(--surface-hover);
+}
+
+/* Gradient text for headings/branding */
+.text-gradient {
+    background: linear-gradient(135deg, #818cf8, #a855f7 60%, #ec4899);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+}
+
+/* Subtle card hover lift */
+.card-hover {
+    transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.card-hover:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-lg);
+    border-color: var(--border-strong);
+}
+
+/* Refined scrollbars */
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--text-muted) 35%, transparent);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--text-muted) 55%, transparent);
+    background-clip: padding-box;
+}
+
+/* Entrance animation utility */
+@keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+.animate-in {
+    animation: fadeInUp 0.4s ease both;
+}
+
+/* Shimmer skeleton for loading states */
+@keyframes shimmer {
+    0% { background-position: -400px 0; }
+    100% { background-position: 400px 0; }
+}
+.skeleton {
+    background: linear-gradient(
+        90deg,
+        var(--surface-hover) 25%,
+        color-mix(in srgb, var(--text-muted) 12%, transparent) 37%,
+        var(--surface-hover) 63%
+    );
+    background-size: 800px 100%;
+    animation: shimmer 1.4s ease infinite;
+    border-radius: 8px;
 }

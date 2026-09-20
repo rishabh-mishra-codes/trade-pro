@@ -1,0 +1,39 @@
+# Copy this file to application-local.properties and fill in your values.
+# application-local.properties is gitignored so your secrets stay private.
+# Run with: mvnw.cmd spring-boot:run -Dspring-boot.run.profiles=local
+
+# ---- Neon PostgreSQL (see backend/README.md for how to get these) ----
+spring.datasource.url=jdbc:postgresql://YOUR-HOST.aws.neon.tech/neondb?sslmode=require
+spring.datasource.username=your_neon_user
+spring.datasource.password=your_neon_password
+
+# ---- JWT (use a long random string, >= 32 chars) ----
+app.jwt.secret=change-me-to-a-long-random-secret-at-least-32-characters
+app.jwt.expiration-ms=604800000
+
+# ---- CORS: frontend origin(s), comma separated ----
+app.cors.allowed-origins=http://localhost:5173
+
+# ---- Password reset ----
+app.expose-reset-token=true
+app.frontend-url=http://localhost:5173
+
+# ---- Razorpay (keep the SECRET server-side only) ----
+app.razorpay.key-id=rzp_test_TeCYZxCQezJ4zx
+app.razorpay.key-secret=your_razorpay_secret
+
+# ---- Twelve Data (server-side, for price-alert scheduler) ----
+app.twelvedata.api-key=your_twelve_data_key
+
+# ---- Gemini AI chatbot (server-side only) ----
+app.gemini.api-key=your_gemini_api_key
+app.gemini.model=gemini-flash-latest
+
+# ---- SMTP email for password reset (optional) ----
+# Set enabled=true and fill in to send real emails. Gmail: use an App Password.
+app.mail.enabled=false
+app.mail.from=no-reply@tradepro.local
+spring.mail.host=smtp.gmail.com
+spring.mail.port=587
+spring.mail.username=
+spring.mail.password=

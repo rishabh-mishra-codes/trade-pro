@@ -1,948 +1,590 @@
-import { useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-    applyTrades,
-    getFinnhubNews,
-    getFinnhubQuotes,
-} from "../services/finnhubService";
-import { finnhubSocket } from "../services/finnhubSocket";
-import {
-    FaChartLine,
-    FaSearch,
-    FaStar,
-    FaRegStar,
     FaArrowUp,
     FaArrowDown,
     FaWallet,
-    FaBell,
-    FaUserCircle,
-    FaSignOutAlt,
     FaPlus,
     FaMinus,
+    FaChartLine,
+    FaTrash,
 } from "react-icons/fa";
 
-import authService from "../appwrite/authService";
+import { getQuotesFor, INDIAN_STOCKS } from "../services/indianStockService";
+import authService from "../services/authService";
+import {
+    fetchPortfolio,
+    buyStock,
+    sellStock,
+    computeMetrics,
+} from "../services/portfolioService";
+import {
+    getWatchlist,
+    addToWatchlist,
+    removeFromWatchlist,
+} from "../services/watchlistService";
+import { placeLimitOrder } from "../services/orderService";
+import { getAvatar } from "../services/profileService";
+import { payWithRazorpay } from "../services/paymentService";
+import { useTheme } from "../context/ThemeContext";
 
-function Home() {
+import NavBar from "../components/NavBar";
+import StockChart from "../components/StockChart";
+import TradeModal from "../components/TradeModal";
+import AddFundsModal from "../components/AddFundsModal";
+import ChatBot from "../components/ChatBot";
 
-    const navigate = useNavigate();
-
-    // -----------------------------
-    // Carousel
-    // -----------------------------
-    const [marketLoading, setMarketLoading] = useState(true);
-    const [marketError, setMarketError] = useState("");
-    const [marketIndices, setMarketIndices] = useState([]);
-    const [watchlist, setWatchlist] = useState([]);
-    const [topGainers, setTopGainers] = useState([]);
-    const [topLosers, setTopLosers] = useState([]);
-    const [news, setNews] = useState([]);
-    const [socketLive, setSocketLive] = useState(false);
-    const [currentSlide, setCurrentSlide] = useState(0);
-    const [user, setUser] = useState(null);
-    const [userDetails, setUserDetails] = useState(null);
-    const [loading, setLoading] = useState(true);
-    
-    useEffect(() => {
-
-    const loadUser = async () => {
-
-        try {
-
-            const currentUser =
-                await authService.getCurrentUser();
-
-            setUser(currentUser);
-
-            console.log(
-                "AUTH USER:",
-                currentUser
-            );
-
-            const details =
-                await authService.getUserDetails(
-                    currentUser.$id,
-                    currentUser.email
-                );
-
-            console.log(
-                "DATABASE USER:",
-                details
-            );
-
-            setUserDetails(
-                details || {
-                    fullName: currentUser.name,
-                    membershipStatus: "active",
-                }
-            );
-
-        } catch (error) {
-
-            console.error(
-                "USER LOAD ERROR:",
-                error
-            );
-
-        } finally {
-
-            setLoading(false);
-
-        }
-
-    };
-
-    loadUser();
-
-}, []);
-
-    useEffect(() => {
-
-    const loadMarketData = async () => {
-
-        try {
-
-            setMarketError("");
-
-            const snapshot = await getFinnhubQuotes();
-
-            setMarketIndices(snapshot.indices);
-            setWatchlist(snapshot.watchlist);
-            setTopGainers(snapshot.topGainers);
-            setTopLosers(snapshot.topLosers);
-
-            try {
-                const articles = await getFinnhubNews();
-                setNews(articles);
-            } catch (newsError) {
-                console.error("Market news error:", newsError);
-            }
-
-        } catch (error) {
-
-            console.error(
-                "Market data error:",
-                error
-            );
-            setMarketError(error.message || "Failed to load live market data");
-
-        } finally {
-
-            setMarketLoading(false);
-
-        }
-
-    };
-
-    loadMarketData();
-
-    const stopSocket = finnhubSocket.start((trades) => {
-        setSocketLive(true);
-        setWatchlist((current) => applyTrades(current, trades));
-        setMarketIndices((current) => applyTrades(current, trades));
-        setTopGainers((current) => applyTrades(current, trades));
-        setTopLosers((current) => applyTrades(current, trades));
+const fmt = (v) =>
+    Number(v || 0).toLocaleString("en-IN", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
     });
 
-    return () => {
-        stopSocket();
-        setSocketLive(false);
-    };
+// Real Indian market indices via Twelve Data index symbols.
+const INDEX_STOCKS = [
+    { symbol: "NIFTY 50:NSE", name: "NIFTY 50" },
+    { symbol: "SENSEX:BSE", name: "SENSEX" },
+];
 
-}, []);
-    const slides = [
-        {
-            title: "Trade Smarter",
-            description:
-                "Track markets, analyze stocks and build your portfolio with confidence.",
-            button: "Explore Markets",
-        },
-        {
-            title: "Build Your Portfolio",
-            description:
-                "Invest in stocks and keep track of your investments in one place.",
-            button: "View Portfolio",
-        },
-        {
-            title: "Stay Ahead of the Market",
-            description:
-                "Follow market movements and discover today's biggest opportunities.",
-            button: "View Watchlist",
-        },
-    ];
+function Home() {
+    const navigate = useNavigate();
+    const { setThemeFromServer } = useTheme();
 
+    const [user, setUser] = useState(null);
+    const [avatar, setAvatar] = useState(null);
+    const [loading, setLoading] = useState(true);
+
+    const [marketLoading, setMarketLoading] = useState(true);
+    const [marketError, setMarketError] = useState("");
+    const [live, setLive] = useState(false);
+    const [indices, setIndices] = useState([]);
+    const [watchStocks, setWatchStocks] = useState([]); // [{symbol,name}]
+    const [quotes, setQuotes] = useState([]); // enriched quotes for watchStocks
+    const [topGainers, setTopGainers] = useState([]);
+    const [topLosers, setTopLosers] = useState([]);
+
+    const [portfolio, setPortfolio] = useState({ wallet: 0, holdings: {} });
+    const [selectedSymbol, setSelectedSymbol] = useState(null);
+
+    const [tradeModal, setTradeModal] = useState({ open: false, mode: "buy", stock: null });
+    const [fundsOpen, setFundsOpen] = useState(false);
+    const [toast, setToast] = useState("");
+
+    // Keep the current watchStocks in a ref so the poll interval always reads
+    // the latest list without needing to be re-created on every change.
+    const watchRef = useRef(watchStocks);
+    watchRef.current = watchStocks;
+
+    const showToast = useCallback((msg) => {
+        setToast(msg);
+        setTimeout(() => setToast(""), 3000);
+    }, []);
+
+    // Initial load: user + portfolio + watchlist
     useEffect(() => {
+        const load = async () => {
+            try {
+                const current = await authService.getCurrentUser();
+                setUser(current);
+                setAvatar(getAvatar(current.$id));
+                if (current.theme) setThemeFromServer(current.theme);
 
-        const timer = setInterval(() => {
+                const [pf, wl] = await Promise.all([
+                    fetchPortfolio(),
+                    getWatchlist().catch(() => null),
+                ]);
+                setPortfolio(pf);
+                setWatchStocks(
+                    wl && wl.length
+                        ? wl.map((w) => ({ symbol: w.symbol, name: w.name }))
+                        : INDIAN_STOCKS.slice(0, 5)
+                );
+            } catch {
+                navigate("/");
+            } finally {
+                setLoading(false);
+            }
+        };
+        load();
+    }, [navigate, setThemeFromServer]);
 
-            setCurrentSlide((prev) =>
-                (prev + 1) % slides.length
-            );
+    // Poll market data for indices + current watchlist. Runs once; reads the
+    // watchlist from a ref so we don't reset the timer on every edit.
+    useEffect(() => {
+        let mounted = true;
 
-        }, 4000);
+        const loadMarket = async () => {
+            const stocks = watchRef.current;
+            if (!stocks.length) {
+                setMarketLoading(false);
+                return;
+            }
+            try {
+                const [q, idx] = await Promise.all([
+                    getQuotesFor(stocks),
+                    getQuotesFor(INDEX_STOCKS).catch(() => []),
+                ]);
+                if (!mounted) return;
 
-        return () => clearInterval(timer);
+                setQuotes(q);
+                setIndices(idx.length ? idx : q.slice(0, 4));
+                const ranked = [...q].sort(
+                    (a, b) => Math.abs(b.rawChange) - Math.abs(a.rawChange)
+                );
+                setTopGainers(ranked.filter((s) => s.positive).slice(0, 3));
+                setTopLosers(ranked.filter((s) => !s.positive).slice(0, 3));
+                setLive(true);
+                setMarketError("");
 
-    }, [slides.length]);
+                setSelectedSymbol((cur) => cur || q[0]?.symbol || null);
+            } catch (err) {
+                if (mounted) {
+                    setLive(false);
+                    setMarketError(err.message || "Failed to load market data");
+                }
+            } finally {
+                if (mounted) setMarketLoading(false);
+            }
+        };
 
+        loadMarket();
+        const timer = setInterval(loadMarket, 15000);
+        return () => {
+            mounted = false;
+            clearInterval(timer);
+        };
+    }, []);
 
-    // -----------------------------
-    // Logout
-    // -----------------------------
+    const livePrices = useMemo(() => {
+        const map = new Map();
+        quotes.forEach((s) => map.set(s.symbol, s.rawPrice));
+        return map;
+    }, [quotes]);
 
-    const logout = async () => {
+    const metrics = useMemo(
+        () => computeMetrics(portfolio, livePrices),
+        [portfolio, livePrices]
+    );
 
+    const openTrade = useCallback(
+        (mode, stock) => setTradeModal({ open: true, mode, stock }),
+        []
+    );
+
+    const confirmTrade = useCallback(
+        async ({ symbol, name, price, qty, orderType }) => {
+            try {
+                if (orderType === "limit") {
+                    await placeLimitOrder({
+                        symbol,
+                        name,
+                        side: tradeModal.mode === "buy" ? "BUY" : "SELL",
+                        price,
+                        qty,
+                    });
+                    showToast(`Limit ${tradeModal.mode} order placed for ${name}`);
+                } else {
+                    const updated =
+                        tradeModal.mode === "buy"
+                            ? await buyStock({ symbol, name, price, qty })
+                            : await sellStock({ symbol, price, qty });
+                    setPortfolio({ ...updated });
+                    showToast(
+                        `${tradeModal.mode === "buy" ? "Bought" : "Sold"} ${qty} ${name}`
+                    );
+                }
+                setTradeModal({ open: false, mode: "buy", stock: null });
+            } catch (err) {
+                showToast(err.message);
+            }
+        },
+        [tradeModal.mode, showToast]
+    );
+
+    const handleAddFunds = useCallback(
+        async (amount) => {
+            await payWithRazorpay({
+                amount,
+                user,
+                onSuccess: async (r) => {
+                    setPortfolio(await fetchPortfolio());
+                    setFundsOpen(false);
+                    showToast(
+                        r.demo
+                            ? `Added ₹${fmt(amount)} (demo mode)`
+                            : `Payment successful: ₹${fmt(amount)}`
+                    );
+                },
+                onFailure: (msg) => showToast(msg),
+            });
+        },
+        [user, showToast]
+    );
+
+    const handleAddStock = useCallback(
+        async (stock) => {
+            if (watchRef.current.some((s) => s.symbol === stock.symbol)) {
+                showToast(`${stock.name} is already in your watchlist`);
+                return;
+            }
+            setWatchStocks((cur) => [...cur, { symbol: stock.symbol, name: stock.name }]);
+            try {
+                await addToWatchlist(stock.symbol, stock.name);
+                const q = await getQuotesFor(watchRef.current);
+                setQuotes(q);
+                showToast(`Added ${stock.name}`);
+            } catch {
+                showToast("Could not save to watchlist");
+            }
+        },
+        [showToast]
+    );
+
+    const handleRemoveStock = useCallback(async (symbol) => {
+        setWatchStocks((cur) => cur.filter((s) => s.symbol !== symbol));
+        setQuotes((cur) => cur.filter((s) => s.symbol !== symbol));
         try {
-
-            await authService.logout();
-
-            navigate("/");
-
-        } catch (error) {
-
-            console.error(error);
-
+            await removeFromWatchlist(symbol);
+        } catch {
+            /* ignore */
         }
+    }, []);
 
-    };
+    const logout = useCallback(async () => {
+        await authService.logout();
+        navigate("/");
+    }, [navigate]);
 
     if (loading) {
-
-    return (
-
-        <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-
-            <div className="text-center">
-
-                <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto">
-                </div>
-
-                <p className="text-gray-400 mt-4">
-                    Loading dashboard...
-                </p>
-
+        return (
+            <div className="min-h-screen app-bg flex items-center justify-center">
+                <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" />
             </div>
+        );
+    }
 
-        </div>
-
-    );
-
-}
-
-    const sharesPerStock = 10;
-    const portfolioValue = watchlist.reduce(
-        (sum, stock) => sum + stock.rawPrice * sharesPerStock,
-        0
-    );
-    const todayPnl = watchlist.reduce(
-        (sum, stock) => sum + stock.rawChange * sharesPerStock,
-        0
-    );
-    const todayPnlPercent = portfolioValue
-        ? (todayPnl / (portfolioValue - todayPnl)) * 100
+    const selectedStock =
+        quotes.find((s) => s.symbol === selectedSymbol) || quotes[0];
+    const ownedQty = tradeModal.stock
+        ? portfolio.holdings[tradeModal.stock.symbol]?.qty || 0
         : 0;
-    const availableBalance = portfolioValue * 0.3;
-
-    const formatUsd = (value) =>
-        Number(value || 0).toLocaleString("en-US", {
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2,
-        });
-
 
     return (
+        <div className="min-h-screen app-bg">
+            <NavBar
+                user={{ ...user, avatarUrl: avatar }}
+                onLogout={logout}
+                live={live}
+                onPickStock={handleAddStock}
+            />
 
-        <div className="min-h-screen bg-slate-950 text-white">
-
-            {/* ================================= */}
-            {/* NAVBAR */}
-            {/* ================================= */}
-
-            <nav className="border-b border-white/10 bg-slate-950/95 backdrop-blur-lg sticky top-0 z-50">
-
-                <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-
-                    {/* Logo */}
-
-                    <div
-                        className="flex items-center gap-3 cursor-pointer"
-                        onClick={() => navigate("/home")}
+            {/* Ticker */}
+            <div className="border-b border-white/10 bg-black/10">
+                <div className="max-w-7xl mx-auto px-6 py-2.5 flex gap-8 overflow-x-auto items-center">
+                    <span
+                        className={`text-xs font-bold whitespace-nowrap ${
+                            live ? "text-emerald-400" : "text-muted"
+                        }`}
                     >
-
-                        <div className="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center">
-
-                            <FaChartLine className="text-xl" />
-
-                        </div>
-
-                        <div>
-
-                            <h1 className="text-xl font-bold">
-                                TradeBro
-                            </h1>
-
-                            <p className="text-xs text-gray-500">
-                                Smart Trading
-                            </p>
-
-                        </div>
-
-                    </div>
-
-
-                    {/* Search */}
-
-                    <div className="hidden md:flex items-center bg-white/5 border border-white/10 rounded-xl px-4 py-2 w-80">
-
-                        <FaSearch className="text-gray-500 mr-3" />
-
-                        <input
-                            type="text"
-                            placeholder="Search stocks..."
-                            className="bg-transparent outline-none w-full text-sm text-white placeholder-gray-500"
-                        />
-
-                    </div>
-
-
-                    {/* Right Side */}
-
-                    <div className="flex items-center gap-5">
-
-                        <button className="text-gray-400 hover:text-white">
-
-                            <FaBell />
-
-                        </button>
-
-                        <div className="hidden sm:flex items-center gap-2">
-
-                            <FaUserCircle className="text-2xl text-indigo-400" />
-
-                            <span className="text-sm">
-                                {userDetails?.fullName || "Trader"}
-                            </span>
-
-                        </div>
-
-                        <button
-                            onClick={logout}
-                            className="text-gray-400 hover:text-red-400 transition"
-                            title="Logout"
-                        >
-
-                            <FaSignOutAlt />
-
-                        </button>
-
-                    </div>
-
-                </div>
-
-            </nav>
-
-
-            {/* ================================= */}
-            {/* MARKET TICKER */}
-            {/* ================================= */}
-
-            <div className="border-b border-white/10 bg-black/20">
-
-                {marketError && (
-                    <p className="max-w-7xl mx-auto px-6 py-2 text-sm text-red-400">
-                        {marketError}
-                    </p>
-                )}
-
-                <div className="max-w-7xl mx-auto px-6 py-3 flex gap-8 overflow-x-auto">
-
-                    <span className={`text-xs font-semibold whitespace-nowrap ${socketLive ? "text-emerald-400" : "text-gray-500"}`}>
-                        {socketLive ? "LIVE" : "CONNECTING"}
+                        {live ? "● LIVE" : "○ CONNECTING"}
                     </span>
-
-                    {marketLoading && (
-                        <span className="text-sm text-gray-400">
-                            Loading Finnhub quotes...
-                        </span>
-                    )}
-
-                    {marketIndices.map((market) => (
-
-                        <div
-                            key={market.name}
-                            className="flex items-center gap-3 whitespace-nowrap"
-                        >
-
-                            <span className="text-sm text-gray-400">
-                                {market.name}
-                            </span>
-
-                            <span className="font-semibold">
-                                {market.value}
-                            </span>
-
+                    {indices.map((m) => (
+                        <div key={m.symbol} className="flex items-center gap-2 whitespace-nowrap">
+                            <span className="text-sm text-muted">{m.name}</span>
+                            <span className="font-semibold text-sm">₹{m.value}</span>
                             <span
-                                className={
-                                    market.positive
-                                        ? "text-emerald-400 text-sm"
-                                        : "text-red-400 text-sm"
-                                }
+                                className={`text-xs ${
+                                    m.positive ? "text-emerald-400" : "text-red-400"
+                                }`}
                             >
-                                {market.percentage}
+                                {m.percentage}
                             </span>
-
                         </div>
-
                     ))}
-
                 </div>
-
             </div>
-
-
-            {/* ================================= */}
-            {/* MAIN */}
-            {/* ================================= */}
 
             <main className="max-w-7xl mx-auto px-6 py-8">
+                {marketError && <p className="mb-4 text-sm text-red-400">{marketError}</p>}
 
-
-                {/* ================================= */}
-                {/* CAROUSEL */}
-                {/* ================================= */}
-
-                <section className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-indigo-900 via-purple-900 to-slate-900 border border-white/10">
-
-                    <div className="min-h-[300px] flex items-center px-8 md:px-16">
-
-                        <div className="max-w-2xl">
-
-                            <p className="text-indigo-300 font-semibold mb-3">
-                                TRADEBRO PLATFORM
-                            </p>
-
-                            <h2 className="text-4xl md:text-5xl font-bold mb-5">
-
-                                {slides[currentSlide].title}
-
-                            </h2>
-
-                            <p className="text-gray-300 text-lg mb-7">
-
-                                {slides[currentSlide].description}
-
-                            </p>
-
-                            <button className="px-6 py-3 rounded-xl bg-white text-black font-semibold hover:bg-gray-200 transition">
-
-                                {slides[currentSlide].button}
-
-                            </button>
-
-                        </div>
-
-                    </div>
-
-
-                    {/* Slide indicators */}
-
-                    <div className="absolute bottom-6 left-8 flex gap-2">
-
-                        {slides.map((_, index) => (
-
+                {/* Portfolio summary cards */}
+                <section className="grid grid-cols-1 md:grid-cols-4 gap-4 animate-in">
+                    <SummaryCard
+                        label="Total Value"
+                        value={`₹${fmt(metrics.totalValue)}`}
+                        icon={<FaChartLine />}
+                        accent="from-indigo-500 to-purple-600"
+                    />
+                    <SummaryCard
+                        label="Available Cash"
+                        value={`₹${fmt(portfolio.wallet)}`}
+                        icon={<FaWallet />}
+                        accent="from-sky-500 to-cyan-600"
+                        action={
                             <button
-                                key={index}
-                                onClick={() => setCurrentSlide(index)}
-                                className={
-                                    index === currentSlide
-                                        ? "w-8 h-2 rounded-full bg-white"
-                                        : "w-2 h-2 rounded-full bg-white/30"
-                                }
-                            />
-
-                        ))}
-
-                    </div>
-
-                </section>
-
-
-                {/* ================================= */}
-                {/* PORTFOLIO */}
-                {/* ================================= */}
-
-
-                <section className="mt-8 grid grid-cols-1 lg:grid-cols-3 gap-5">
-
-                    {/* Welcome + Portfolio */}
-
-                    <div className="lg:col-span-2 rounded-2xl border border-white/10 bg-white/5 p-6">
-
-                        {/* USER WELCOME */}
-
-                        <p className="text-gray-400 text-sm">
-                            Welcome back
-                        </p>
-
-                        <h2 className="text-3xl font-bold mt-2">
-                            {userDetails?.fullName || "Trader"} 👋
-                        </h2>
-
-
-                        {/* Portfolio Information */}
-
-                        <div className="mt-6">
-
-                            <p className="text-gray-400 text-sm">
-                                Total Portfolio Value
-                            </p>
-
-                            <h2 className="text-3xl font-bold mt-2">
-                                ${formatUsd(portfolioValue)}
-                            </h2>
-
-                        </div>
-
-
-                        <div className="mt-6 flex gap-8">
-
-                            <div>
-
-                                <p className="text-gray-500 text-sm">
-                                    Today's P&L
-                                </p>
-
-                                <p className={`${todayPnl >= 0 ? "text-emerald-400" : "text-red-400"} font-semibold mt-1`}>
-                                    {todayPnl >= 0 ? "+" : "-"}${formatUsd(Math.abs(todayPnl))} ({todayPnlPercent >= 0 ? "+" : ""}{todayPnlPercent.toFixed(2)}%)
-                                </p>
-
-                            </div>
-
-
-                            <div>
-
-                                <p className="text-gray-500 text-sm">
-                                    Live holdings
-                                </p>
-
-                                <p className="text-gray-300 font-semibold mt-1">
-                                    10 shares × {watchlist.length || 0} active tickers
-                                </p>
-
-                            </div>
-
-                        </div>
-
-                    </div>
-
-
-                    {/* Available Balance */}
-
-                    <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
-
-                        <p className="text-gray-400 text-sm">
-                            Available Balance
-                        </p>
-
-                        <h2 className="text-3xl font-bold mt-2">
-                            ${formatUsd(availableBalance)}
-                        </h2>
-
-                        <button className="mt-6 w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 transition font-semibold">
-
-                            Add Funds
-
-                        </button>
-
-                        {/* Membership */}
-
-                        <div className="mt-5">
-
-                            <span className="text-gray-400 text-sm">
-                                Membership
-                            </span>
-
-                            <p className="text-emerald-400 font-semibold capitalize">
-                                {userDetails?.membershipStatus || "active"}
-                            </p>
-
-                        </div>
-
-                    </div>
-
-                </section>
-
-
-                                {/* ================================= */}
-                                {/* MARKET INDICES */}
-                                {/* ================================= */}
-
-                                <section className="mt-10">
-
-                                    <div className="flex justify-between items-center mb-5">
-
-                                        <h2 className="text-2xl font-bold">
-                                            Live US stocks
-                                        </h2>
-
-                                        <button className="text-indigo-400 text-sm">
-                                            View All
-                                        </button>
-
-                                    </div>
-
-
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-
-                                        {!marketLoading && marketIndices.length === 0 && (
-                                            <p className="text-gray-500">
-                                                Live quotes unavailable right now.
-                                            </p>
-                                        )}
-
-                                        {marketIndices.map((market) => (
-
-                                            <div
-                                                key={market.name}
-                                                className="bg-white/5 border border-white/10 rounded-2xl p-5 hover:border-indigo-500/50 transition"
-                                            >
-
-                                                <p className="text-gray-400 text-sm">
-                                                    {market.name}
-                                                </p>
-
-                                                <h3 className="text-xl font-bold mt-2">
-                                                    {market.value}
-                                                </h3>
-
-                                                <div
-                                                    className={
-                                                        "flex items-center gap-2 mt-2 " +
-                                                        (market.positive
-                                                            ? "text-emerald-400"
-                                                            : "text-red-400")
-                                                    }
-                                                >
-
-                                                    {market.positive
-                                                        ? <FaArrowUp />
-                                                        : <FaArrowDown />
-                                                    }
-
-                                                    <span>
-                                                        {market.change}
-                                                    </span>
-
-                                                    <span>
-                                                        ({market.percentage})
-                                                    </span>
-
-                                                </div>
-
-                                            </div>
-
-                                        ))}
-
-                                    </div>
-
-                                </section>
-
-
-                {/* ================================= */}
-                {/* WATCHLIST + MOVERS */}
-                {/* ================================= */}
-
-                <section className="mt-10 grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-
-                    {/* Watchlist */}
-
-                    <div className="lg:col-span-2">
-
-                        <div className="flex justify-between items-center mb-5">
-
-                            <h2 className="text-2xl font-bold">
-                                My Watchlist
-                            </h2>
-
-                            <button className="text-indigo-400 text-sm">
-                                View All
+                                onClick={() => setFundsOpen(true)}
+                                className="mt-3 text-xs font-semibold text-indigo-400 hover:text-indigo-300"
+                            >
+                                + Add funds
                             </button>
-
-                        </div>
-
-
-                        <div className="rounded-2xl border border-white/10 overflow-hidden">
-
-                            {marketLoading && (
-                                <p className="p-5 text-gray-500">
-                                    Fetching live quotes...
-                                </p>
-                            )}
-
-                            {watchlist.map((stock) => (
-
-                                <div
-                                    key={stock.symbol}
-                                    className="flex items-center justify-between p-5 border-b border-white/10 hover:bg-white/5 transition"
-                                >
-
-                                    <div className="flex items-center gap-4">
-
-                                        <FaRegStar className="text-gray-500 hover:text-yellow-400 cursor-pointer" />
-
-                                        <div>
-
-                                            <p className="font-semibold">
-                                                {stock.name}
-                                            </p>
-
-                                            <p className="text-xs text-gray-500">
-                                                {stock.symbol}
-                                            </p>
-
-                                        </div>
-
-                                    </div>
-
-
-                                    <div className="text-right">
-
-                                        <p className="font-semibold">
-                                            ${stock.price}
-                                        </p>
-
-                                        <p
-                                            className={
-                                                stock.positive
-                                                    ? "text-emerald-400 text-sm"
-                                                    : "text-red-400 text-sm"
-                                            }
-                                        >
-                                            {stock.percentage}
-                                        </p>
-
-                                    </div>
-
-                                </div>
-
-                            ))}
-
-                        </div>
-
-                    </div>
-
-
-                    {/* Top Gainers */}
-
-                    <div>
-
-                        <h2 className="text-2xl font-bold mb-5">
-                            Market Movers
-                        </h2>
-
-
-                        <div className="rounded-2xl border border-white/10 p-5">
-
-                            <h3 className="text-emerald-400 font-semibold mb-4">
-                                Top Gainers
-                            </h3>
-
-                            {marketLoading && (
-                                <p className="text-gray-500 mb-4">
-                                    Fetching movers...
-                                </p>
-                            )}
-
-                            {topGainers.map((stock) => (
-
-                                <div
-                                    key={stock.name}
-                                    className="flex justify-between py-4 border-b border-white/10"
-                                >
-
-                                    <div>
-
-                                        <p className="font-medium">
-                                            {stock.name}
-                                        </p>
-
-                                        <p className="text-sm text-gray-500">
-                                            ${stock.price}
-                                        </p>
-
-                                    </div>
-
-                                    <span className="text-emerald-400">
-                                        {stock.percentage}
-                                    </span>
-
-                                </div>
-
-                            ))}
-
-
-                            <h3 className="text-red-400 font-semibold mt-6 mb-2">
-                                Top Losers
-                            </h3>
-
-                            {topLosers.map((stock) => (
-
-                                <div
-                                    key={stock.name}
-                                    className="flex justify-between py-4 border-b border-white/10"
-                                >
-
-                                    <div>
-
-                                        <p className="font-medium">
-                                            {stock.name}
-                                        </p>
-
-                                        <p className="text-sm text-gray-500">
-                                            ${stock.price}
-                                        </p>
-
-                                    </div>
-
-                                    <span className="text-red-400">
-                                        {stock.percentage}
-                                    </span>
-
-                                </div>
-
-                            ))}
-
-                        </div>
-
-                    </div>
-
+                        }
+                    />
+                    <SummaryCard
+                        label="Holdings Value"
+                        value={`₹${fmt(metrics.holdingsValue)}`}
+                        icon={<FaChartLine />}
+                        accent="from-emerald-500 to-teal-600"
+                    />
+                    <SummaryCard
+                        label="Total P&L"
+                        value={`${metrics.totalPnl >= 0 ? "+" : "-"}₹${fmt(Math.abs(metrics.totalPnl))}`}
+                        sub={`${metrics.totalPnlPercent >= 0 ? "+" : ""}${metrics.totalPnlPercent.toFixed(2)}%`}
+                        icon={metrics.totalPnl >= 0 ? <FaArrowUp /> : <FaArrowDown />}
+                        accent={
+                            metrics.totalPnl >= 0
+                                ? "from-emerald-500 to-green-600"
+                                : "from-red-500 to-rose-600"
+                        }
+                        valueClass={metrics.totalPnl >= 0 ? "text-emerald-400" : "text-red-400"}
+                    />
                 </section>
 
-
-                {/* ================================= */}
-                {/* QUICK ACTIONS */}
-                {/* ================================= */}
-
-                <section className="mt-10">
-
-                    <h2 className="text-2xl font-bold mb-5">
-                        Quick Actions
-                    </h2>
-
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-
-                        <button className="p-5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 transition text-left">
-
-                            <FaPlus className="mb-4" />
-
-                            <p className="font-semibold">
-                                Buy Stock
-                            </p>
-
-                        </button>
-
-
-                        <button className="p-5 rounded-2xl bg-white/5 border border-white/10 hover:bg-white/10 transition text-left">
-
-                            <FaMinus className="mb-4 text-red-400" />
-
-                            <p className="font-semibold">
-                                Sell Stock
-                            </p>
-
-                        </button>
-
-
-                        <button className="p-5 rounded-2xl bg-white/5 border border-white/10 hover:bg-white/10 transition text-left">
-
-                            <FaStar className="mb-4 text-yellow-400" />
-
-                            <p className="font-semibold">
-                                Watchlist
-                            </p>
-
-                        </button>
-
-
-                        <button className="p-5 rounded-2xl bg-white/5 border border-white/10 hover:bg-white/10 transition text-left">
-
-                            <FaChartLine className="mb-4 text-indigo-400" />
-
-                            <p className="font-semibold">
-                                Analyze Market
-                            </p>
-
-                        </button>
-
-                    </div>
-
-                </section>
-
-
-                {/* ================================= */}
-                {/* NEWS */}
-                {/* ================================= */}
-
-                <section className="mt-10 pb-12">
-
-                    <div className="flex justify-between items-center mb-5">
-
-                        <h2 className="text-2xl font-bold">
-                            Market News
-                        </h2>
-
-                        <button className="text-indigo-400 text-sm">
-                            View All
-                        </button>
-
-                    </div>
-
-
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-
-                        {news.length === 0 && (
-                            <p className="text-gray-500">
-                                Live headlines will appear here when Alpha Vantage news is available.
-                            </p>
+                {/* Chart + watchlist */}
+                <section className="mt-8 grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <div className="lg:col-span-2">
+                        {selectedStock ? (
+                            <StockChart symbol={selectedStock.symbol} name={selectedStock.name} />
+                        ) : (
+                            <div className="surface rounded-2xl h-100 flex items-center justify-center text-muted">
+                                Loading chart...
+                            </div>
                         )}
 
-                        {news.map((article) => (
-
-                        <a
-                            key={article.url}
-                            href={article.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="bg-white/5 border border-white/10 rounded-2xl p-5 hover:bg-white/10 transition"
-                        >
-
-                            <span className="text-xs text-indigo-400 uppercase">
-                                {article.topic}
-                            </span>
-
-                            <h3 className="font-semibold text-lg mt-3">
-                                {article.title}
-                            </h3>
-
-                            <p className="text-gray-500 text-sm mt-3 line-clamp-3">
-                                {article.summary}
-                            </p>
-
-                        </a>
-
-                        ))}
-
+                        {selectedStock && (
+                            <div className="mt-4 flex items-center gap-3">
+                                <button
+                                    onClick={() => openTrade("buy", selectedStock)}
+                                    className="flex-1 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold flex items-center justify-center gap-2"
+                                >
+                                    <FaPlus size={12} /> Buy {selectedStock.symbol.split(":")[0]}
+                                </button>
+                                <button
+                                    onClick={() => openTrade("sell", selectedStock)}
+                                    className="flex-1 py-3 rounded-xl bg-red-600 hover:bg-red-700 text-white font-semibold flex items-center justify-center gap-2"
+                                >
+                                    <FaMinus size={12} /> Sell {selectedStock.symbol.split(":")[0]}
+                                </button>
+                            </div>
+                        )}
                     </div>
 
+                    {/* Watchlist */}
+                    <div>
+                        <div className="flex items-center justify-between mb-3">
+                            <h2 className="text-lg font-bold">Watchlist</h2>
+                            <span className="text-xs text-muted">
+                                {watchStocks.length} stocks
+                            </span>
+                        </div>
+                        <div className="surface rounded-2xl overflow-hidden">
+                            {marketLoading && quotes.length === 0 && (
+                                <p className="p-5 text-muted text-sm">Loading quotes...</p>
+                            )}
+                            {quotes.map((stock) => (
+                                <WatchRow
+                                    key={stock.symbol}
+                                    stock={stock}
+                                    selected={selectedSymbol === stock.symbol}
+                                    onSelect={setSelectedSymbol}
+                                    onRemove={handleRemoveStock}
+                                />
+                            ))}
+                            {!marketLoading && quotes.length === 0 && (
+                                <p className="p-5 text-muted text-sm">
+                                    Search above to add stocks.
+                                </p>
+                            )}
+                        </div>
+                    </div>
                 </section>
 
+                {/* Holdings */}
+                <section className="mt-10">
+                    <h2 className="text-lg font-bold mb-3">Your Holdings</h2>
+                    <div className="surface rounded-2xl overflow-hidden">
+                        {metrics.holdings.length === 0 ? (
+                            <p className="p-6 text-muted text-sm text-center">
+                                No holdings yet. Select a stock and hit Buy to get started.
+                            </p>
+                        ) : (
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-sm">
+                                    <thead className="text-muted text-xs border-b border-white/10">
+                                        <tr>
+                                            <th className="text-left p-4">Stock</th>
+                                            <th className="text-right p-4">Qty</th>
+                                            <th className="text-right p-4">Avg</th>
+                                            <th className="text-right p-4">LTP</th>
+                                            <th className="text-right p-4">Value</th>
+                                            <th className="text-right p-4">P&L</th>
+                                            <th className="text-right p-4">Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {metrics.holdings.map((h) => (
+                                            <tr key={h.symbol} className="border-b border-white/5">
+                                                <td className="p-4">
+                                                    <p className="font-semibold">{h.name}</p>
+                                                    <p className="text-xs text-muted">{h.symbol}</p>
+                                                </td>
+                                                <td className="text-right p-4">{h.qty}</td>
+                                                <td className="text-right p-4">₹{fmt(h.avgPrice)}</td>
+                                                <td className="text-right p-4">₹{fmt(h.last)}</td>
+                                                <td className="text-right p-4">₹{fmt(h.marketValue)}</td>
+                                                <td
+                                                    className={`text-right p-4 ${
+                                                        h.pnl >= 0 ? "text-emerald-400" : "text-red-400"
+                                                    }`}
+                                                >
+                                                    {h.pnl >= 0 ? "+" : "-"}₹{fmt(Math.abs(h.pnl))}
+                                                    <span className="block text-xs">
+                                                        {h.pnlPercent >= 0 ? "+" : ""}
+                                                        {h.pnlPercent.toFixed(2)}%
+                                                    </span>
+                                                </td>
+                                                <td className="text-right p-4">
+                                                    <button
+                                                        onClick={() =>
+                                                            openTrade("sell", {
+                                                                symbol: h.symbol,
+                                                                name: h.name,
+                                                                rawPrice: h.last,
+                                                            })
+                                                        }
+                                                        className="px-3 py-1 rounded-lg bg-red-600/80 hover:bg-red-600 text-white text-xs"
+                                                    >
+                                                        Sell
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </div>
+                </section>
+
+                {/* Movers */}
+                <section className="mt-10 grid grid-cols-1 md:grid-cols-2 gap-6 pb-12">
+                    <MoverCard title="Top Gainers" color="text-emerald-400" items={topGainers} />
+                    <MoverCard title="Top Losers" color="text-red-400" items={topLosers} />
+                </section>
             </main>
 
+            <TradeModal
+                open={tradeModal.open}
+                mode={tradeModal.mode}
+                stock={tradeModal.stock}
+                wallet={portfolio.wallet}
+                ownedQty={ownedQty}
+                onClose={() => setTradeModal({ open: false, mode: "buy", stock: null })}
+                onConfirm={confirmTrade}
+            />
+
+            <AddFundsModal
+                open={fundsOpen}
+                onClose={() => setFundsOpen(false)}
+                onPay={handleAddFunds}
+            />
+
+            {toast && (
+                <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-200 surface px-5 py-3 rounded-xl shadow-2xl text-sm font-medium">
+                    {toast}
+                </div>
+            )}
+
+            <ChatBot />
         </div>
-
     );
-
 }
+
+const WatchRow = memo(function WatchRow({ stock, selected, onSelect, onRemove }) {
+    return (
+        <div
+            className={`group flex items-center justify-between p-4 border-b border-white/5 hover:bg-white/5 transition ${
+                selected ? "bg-white/5" : ""
+            }`}
+        >
+            <button
+                onClick={() => onSelect(stock.symbol)}
+                className="flex-1 text-left"
+            >
+                <p className="font-semibold text-sm">{stock.name}</p>
+                <p className="text-xs text-muted">{stock.symbol}</p>
+            </button>
+            <div className="flex items-center gap-3">
+                <div className="text-right">
+                    <p className="font-semibold text-sm">₹{stock.price}</p>
+                    <p
+                        className={`text-xs ${
+                            stock.positive ? "text-emerald-400" : "text-red-400"
+                        }`}
+                    >
+                        {stock.percentage}
+                    </p>
+                </div>
+                <button
+                    onClick={() => onRemove(stock.symbol)}
+                    className="opacity-0 group-hover:opacity-100 text-muted hover:text-red-400 transition"
+                    title="Remove"
+                >
+                    <FaTrash size={11} />
+                </button>
+            </div>
+        </div>
+    );
+});
+
+const SummaryCard = memo(function SummaryCard({ label, value, sub, icon, accent, action, valueClass }) {
+    return (
+        <div className="surface card-hover rounded-2xl p-5">
+            <div className="flex items-center justify-between">
+                <p className="text-sm text-muted font-medium">{label}</p>
+                <div
+                    className={`h-9 w-9 rounded-xl bg-linear-to-br ${accent} flex items-center justify-center text-white text-sm shadow-lg`}
+                >
+                    {icon}
+                </div>
+            </div>
+            <p className={`text-2xl font-extrabold mt-3 tracking-tight ${valueClass || ""}`}>
+                {value}
+            </p>
+            {sub && <p className={`text-sm mt-0.5 ${valueClass || "text-muted"}`}>{sub}</p>}
+            {action}
+        </div>
+    );
+});
+
+const MoverCard = memo(function MoverCard({ title, color, items }) {
+    return (
+        <div className="surface rounded-2xl p-5">
+            <h3 className={`font-bold mb-3 ${color}`}>{title}</h3>
+            {items.length === 0 && <p className="text-muted text-sm">No data yet.</p>}
+            {items.map((s) => (
+                <div
+                    key={s.symbol}
+                    className="flex justify-between py-3 border-b border-white/5 last:border-0"
+                >
+                    <div>
+                        <p className="font-medium text-sm">{s.name}</p>
+                        <p className="text-xs text-muted">₹{fmt(s.rawPrice)}</p>
+                    </div>
+                    <span className={color}>{s.percentage}</span>
+                </div>
+            ))}
+        </div>
+    );
+});
 
 export default Home;

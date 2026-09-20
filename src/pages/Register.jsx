@@ -1,178 +1,109 @@
-import { Link } from "react-router-dom";
-import { FaUserCircle } from "react-icons/fa";
-import { MdEmail } from "react-icons/md";
-import { RiLockPasswordFill } from "react-icons/ri";
+import { Link, useNavigate } from "react-router-dom";
 import { FaUser } from "react-icons/fa";
+import { MdEmail } from "react-icons/md";
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import authService from "../appwrite/authService";
-function Register(){
+import authService from "../services/authService";
+import PasswordField from "../components/PasswordField";
+import AuthLayout from "../components/AuthLayout";
+import TextInput from "../components/TextInput";
+import { evaluatePassword } from "../utils/passwordStrength";
 
+function Register() {
     const navigate = useNavigate();
 
     const [fullName, setFullName] = useState("");
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
-    const [phoneNumber, setPhoneNumber] = useState("");
-    const [address, setAddress] = useState("");
-    const [dateOfBirth, setDateOfBirth] = useState("");
     const [confirmPassword, setConfirmPassword] = useState("");
+    const [phoneNumber, setPhoneNumber] = useState("");
+    const [error, setError] = useState("");
+    const [submitting, setSubmitting] = useState(false);
 
     const handleSubmit = async (e) => {
+        e.preventDefault();
+        setError("");
 
-    e.preventDefault();
+        if (password !== confirmPassword) {
+            setError("Passwords do not match");
+            return;
+        }
+        if (evaluatePassword(password).score < 2) {
+            setError("Please choose a stronger password");
+            return;
+        }
 
-      if (password !== confirmPassword) {
-        alert("Passwords do not match");
-        return;
-    }
+        setSubmitting(true);
+        try {
+            await authService.register({ fullName, email, password, phoneNumber });
+            navigate("/home");
+        } catch (err) {
+            setError(err.message || "Registration failed");
+        } finally {
+            setSubmitting(false);
+        }
+    };
 
-    try {
+    return (
+        <AuthLayout title="Create account" subtitle="Start trading in minutes">
+            <form onSubmit={handleSubmit} className="space-y-4">
+                <TextInput
+                    type="text"
+                    icon={<FaUser />}
+                    placeholder="Full Name"
+                    required
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                />
 
-        await authService.register({
+                <TextInput
+                    type="email"
+                    icon={<MdEmail />}
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="Email"
+                />
 
-            fullName,
-            email,
-            password,
-            phoneNumber,
-            address,
-            dateOfBirth
+                <TextInput
+                    type="tel"
+                    icon={<FaUser />}
+                    value={phoneNumber}
+                    onChange={(e) => setPhoneNumber(e.target.value)}
+                    placeholder="Phone (optional)"
+                />
 
-        });
+                <PasswordField
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    showStrength
+                />
 
-        alert("Account Created Successfully");
+                <PasswordField
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Confirm Password"
+                    required
+                />
 
-        navigate("/home");
+                {error && <p className="text-sm text-red-500">{error}</p>}
 
-    } catch (error) {
+                <button
+                    disabled={submitting}
+                    className="w-full bg-linear-to-r from-indigo-600 to-violet-600 hover:opacity-90 transition text-white font-semibold py-3 rounded-xl shadow-lg shadow-indigo-500/20 disabled:opacity-60"
+                >
+                    {submitting ? "Creating..." : "Create account"}
+                </button>
+            </form>
 
-        alert(error.message);
-
-    }
-
-};
-return(
-
-<div className="min-h-screen bg-gradient-to-br from-indigo-900 via-black to-purple-900 flex justify-center items-center">
-
-<div className="w-[420px] bg-white/10 backdrop-blur-xl rounded-3xl shadow-2xl p-10 border border-white/20">
-<h2 className="text-center text-indigo-300 text-sm tracking-widest uppercase">
-    Stock Trading Platform
-</h2>
-<div className="flex justify-center">
-    <FaUserCircle className="text-white text-7xl" />
-</div>
-<h1 className="text-center text-4xl font-bold text-white mt-4">
-
-Create Account
-
-</h1>
-
-<p className="text-center text-gray-300 mt-2">
-
-Create your account to get started
-
-</p>
-
-<form
-    onSubmit={handleSubmit}
-    className="mt-8 space-y-5"
->
-
-<div className="relative">
-    <FaUser className="absolute top-4 left-3 text-gray-400"/>
-
-  <input
-    type="text"s
-    placeholder="Full Name"
-    required
-    value={fullName}
-    onChange={(e)=>setFullName(e.target.value)}
-    className="w-full pl-10 pr-4 py-3 rounded-xl bg-white/20 text-white placeholder-gray-300 border border-white/20 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-400 transition"
-  />
-  </div>
-<div className="relative">
-  
-
-<MdEmail className="absolute top-4 left-3 text-gray-400"/>
-
-<input
-
-type="email"
-required
-value={email}
-onChange={(e)=>setEmail(e.target.value)}
-placeholder="Email"
-
-className="w-full pl-10 pr-4 py-3 rounded-xl bg-white/20 text-white placeholder-gray-300 border border-white/20 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-400 transition"
-
-/>
-
-</div>
-
-<div className="relative">
-
-<RiLockPasswordFill className="absolute top-4 left-3 text-gray-400"/>
-
-<input
-
-type="password"
-required
-value={password}
-onChange={(e)=>setPassword(e.target.value)}
-placeholder="Password"
-
-className="w-full pl-10 pr-4 py-3 rounded-xl bg-white/20 text-white placeholder-gray-300 border border-white/20 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-400 transition"
-
-/>
-</div>
-<div className="relative">
-  <RiLockPasswordFill className="absolute top-4 left-3 text-gray-400" />
-
-  <input
-    type="password"
-    placeholder="Confirm Password"
-    required
-    value={confirmPassword}
-    onChange={(e)=>setConfirmPassword(e.target.value)}
-    
-    className="w-full pl-10 pr-4 py-3 rounded-xl bg-white/20 text-white placeholder-gray-300 border border-white/20 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-400 transition"
-  />
-</div>
-
-
-
-<button
-
-className="w-full bg-indigo-600 hover:bg-indigo-700 transition-all duration-300 text-white font-bold py-3 rounded-xl shadow-lg hover:scale-105"
-
->
-
-Create Account
-
-</button>
-
-</form>
-
-<p className="text-center text-gray-300 mt-6">
-Already have an account?
-<Link
-    to="/"
-    className="text-indigo-400 ml-2 hover:text-indigo-300"
->
-    Login
-</Link>
-
-
-</p>
-
-
-</div>
-
-</div>
-
-)
-
+            <p className="text-muted mt-6 text-sm">
+                Already have an account?
+                <Link to="/" className="text-(--accent) ml-1.5 font-semibold">
+                    Log in
+                </Link>
+            </p>
+        </AuthLayout>
+    );
 }
 
 export default Register;

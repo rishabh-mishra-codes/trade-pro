@@ -1,0 +1,8 @@
+target/
+.env
+application-local.properties
+src/main/resources/application-local.properties
+*.log
+.idea/
+*.iml
+.vscode/
